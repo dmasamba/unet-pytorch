@@ -65,11 +65,18 @@ python train.py --images_dir data/imgs --masks_dir data/masks --batch-size 4 --e
 ```
 - The model expects single-channel CT images in `.npy` format.
 - All training parameters can be set via command-line arguments (see `python train.py --help`).
-- **Cross-validation:** The code supports 5-fold cross-validation using split files (`train_new0.txt`, ..., `train_new4.txt` and `valid_new0.txt`, ..., `valid_new4.txt`).  
-  During training, any missing or unmatched files in the splits are automatically filtered out for safety.
 
-- **TensorBoard Logging:**  
-  Training and validation metrics for each fold are logged to TensorBoard in a directory named with the fold number and the current date/time (format: `runs_fold{fold}_mm_dd_yy-hh_mm_ss`).
+### K-Fold Cross Validation
+
+To train using k-fold cross validation (default is 5 folds), ensure you have split files named `train_new0.txt`, ..., `train_new{k-1}.txt` and `valid_new0.txt`, ..., `valid_new{k-1}.txt` in your data directory.  
+You can specify the number of folds with `--num_folds` (default: 5):
+
+```sh
+python train.py --images_dir data/imgs --masks_dir data/masks --data data --num_folds 5 --batch-size 4 --epochs 10
+```
+
+- For each fold, the code will automatically use the corresponding split files and filter out any missing/unmatched files for safety.
+- TensorBoard logs for each fold are saved in a directory named with the fold number and the current date/time (format: `runs_fold{fold}_mm_dd_yy-hh_mm_ss`).
 
 ## Model
 
