@@ -45,6 +45,9 @@ class COVIDCTDataset(Dataset):
         # Optionally apply transforms
         if self.transform:
             image, mask = self.transform(image, mask)
+        # Convert to torch tensors
+        image = torch.from_numpy(image)
+        mask = torch.from_numpy(mask).long()  # Ensure mask is LongTensor for one_hot
         return image, mask
 
 
@@ -120,8 +123,11 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
         start_time = time.time()
         image = image.to(device)
         target = target.to(device)
+        # Squeeze channel dim if present (B, 1, H, W) -> (B, H, W)
+        if target.ndim == 4 and target.shape[1] == 1:
+            target = target.squeeze(1)
 
-        with torch.cuda.amp.autocast(enabled=scaler is not None):
+        with torch.amp.autocast('cuda', enabled=scaler is not None):
             output = model(image)
             loss = criterion(output, target)
 
@@ -156,6 +162,9 @@ def evaluate(model, data_loader, device, conf_threshold=0.5):
 
     for image, target in tqdm(data_loader, total=len(data_loader)):
         image, target = image.to(device), target.to(device)
+        # Squeeze channel dim if present (B, 1, H, W) -> (B, H, W)
+        if target.ndim == 4 and target.shape[1] == 1:
+            target = target.squeeze(1)
         output = model(image)
 
         if model.num_classes == 1:
