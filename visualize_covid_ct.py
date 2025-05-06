@@ -31,7 +31,7 @@ def visualize_sample(image_path, mask_path, overlay=False):
     else:
         raise ValueError(f"Unsupported image shape: {image_np.shape}")
 
-    # Optionally window & normalize your CT (↑ recommended!)
+    # Optionally window & normalize your CT
     # e.g. lung window: [-1000, 400] HU → [0,1]
     wmin, wmax = -1000, 400
     image_clipped = np.clip(image_disp, wmin, wmax)
@@ -51,9 +51,9 @@ def visualize_sample(image_path, mask_path, overlay=False):
     axs[1].axis('off')
 
     if overlay:
-        # 1) show the windowed CT
+        # show the windowed CT
         axs[2].imshow(image_norm, cmap='gray')
-        # 2) overlay the mask in red
+        # overlay the mask with some transparency
         axs[2].imshow(mask_np, cmap='jet', alpha=0.4)  
         axs[2].set_title('Overlay')
         axs[2].axis('off')
