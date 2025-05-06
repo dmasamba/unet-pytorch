@@ -1,4 +1,6 @@
-# [UNet](https://arxiv.org/abs/1505.04597) Implementation using PyTorch | Car Segmentation
+# UNet PyTorch - COVID CT Segmentation
+
+This repository implements a UNet for semantic segmentation, adapted for the COVID CT Scans dataset with `.npy` images and masks.
 
 ![Downloads](https://img.shields.io/github/downloads/yakhyo/unet-pytorch/total) [![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/yakhyo/unet-pytorch)
 
@@ -19,99 +21,68 @@
   </tr>
 </table>
 
-## Getting Started
+## Dataset Preparation
 
+- Place your COVID CT images and masks as `.npy` files in separate directories.
+- Each image and its corresponding mask must have the same filename (e.g., `case_001.npy` in both folders).
+
+Example directory structure:
 ```
-git clone git@github.com:yakhyo/unet-pytorch.git
-cd unet-pytorch
-```
-
-- [x] Dice loss and Cross Entropy loss used for training. See the [dice loss](unet/utils/loss.py) implementation. `dice_score = 1 - dice_loss` used for evaluation.
-- [x] Model weight provided in `weights` folder. Weights saved in f16 (~60MB).
-- [x] [Demo Jupyter Notebook](demo.ipynb).
-
-To Do:
-- [] ONNX export.
-- [] ONNX inference.
-
-### Dataset
-
-[Carvana Image Masking (PNG)](https://www.kaggle.com/datasets/ipythonx/carvana-image-masking-png) dataset is used to train the model. After downloading the data place them under `./data` directory.
-
-```
-├── data
-    ├── train_images
-         ├── xxx.jpg
-         ├── xxy.jpg
-         ├── xxz.jpg
-          ....
-    ├── train_masks
-         ├── xxx.png
-         ├── xxy.png
-         ├── xxz.png
+data/
+  images/
+    case_001.npy
+    case_002.npy
+    ...
+  masks/
+    case_001.npy
+    case_002.npy
+    ...
 ```
 
-### Training
-
-Training arguments
-
-```
-usage: train.py [-h] [--data DATA] [--scale SCALE] [--num-classes NUM_CLASSES] [--weights WEIGHTS] [--epochs EPOCHS] [--batch-size BATCH_SIZE] [--num-workers N] [--lr LR] [--weight-decay WEIGHT_DECAY] [--momentum MOMENTUM] [--amp] [--print-freq PRINT_FREQ]
-                [--resume RESUME] [--use-deterministic-algorithms] [--save-dir SAVE_DIR]
-
-UNet training arguments
-
-options:
-  -h, --help            show this help message and exit
-  --data DATA           Directory containing the dataset (default: './data')
-  --scale SCALE         Scale factor for input image size (default: 0.5)
-  --num-classes NUM_CLASSES
-                        Number of output classes (default: 2)
-  --weights WEIGHTS     Path to pretrained model weights (default: '')
-  --epochs EPOCHS       Number of training epochs (default: 10)
-  --batch-size BATCH_SIZE
-                        Batch size for training (default: 4)
-  --num-workers N       Number of data loading workers (default: 8)
-  --lr LR               Learning rate (default: 1e-5)
-  --weight-decay WEIGHT_DECAY
-                        Weight decay (default: 1e-8)
-  --momentum MOMENTUM   Momentum (default: 0.9)
-  --amp                 Enable mixed precision training
-  --print-freq PRINT_FREQ
-                        Frequency of printing training progress (default: 10)
-  --resume RESUME       Path to checkpoint to resume training from (default: '')
-  --use-deterministic-algorithms
-                        Forces the use of deterministic algorithms only.
-  --save-dir SAVE_DIR   Directory to save model weights (default: 'weights')
+**Ensure dataset consistency:**  
+You can check and clean unmatched files using:
+```sh
+python check_dataset_consistency.py --images_dir data/images --masks_dir data/masks --clean
 ```
 
-Train the model
+## Visualize Samples
 
-```commandline
-python train.py
+To visualize random samples and their masks (with optional overlay):
+```sh
+python visualize_covid_ct.py --images_dir data/images --masks_dir data/masks --num_samples 4 --overlay
 ```
 
-### Inference
+## Training
 
-Inference arguments
-
+To train the UNet on the COVID CT dataset:
+```sh
+python train.py --images_dir data/images --masks_dir data/masks --batch-size 4 --epochs 10
 ```
-usage: inference.py [-h] [--model-path MODEL_PATH] [--image-path IMAGE_PATH] [--scale SCALE] [--save-overlay]
+- The model expects single-channel CT images in `.npy` format.
+- All training parameters can be set via command-line arguments (see `python train.py --help`).
 
-Image Segmentation Inference
+## Model
 
-options:
-  -h, --help            show this help message and exit
-  --model-path MODEL_PATH
-                        Path to the model weights
-  --image-path IMAGE_PATH
-                        Path to the input image
-  --scale SCALE         Scale factor for resizing the image
-  --save-overlay        Save the overlay image if this flag is set
+- The UNet model is configured for single-channel (grayscale) input.
+- The number of output classes can be set with `--num-classes` (default: 2).
+
+## Requirements
+
+- Python 3.7+
+- PyTorch
+- numpy
+- tqdm
+- torchsummary
+- matplotlib
+- PIL
+
+Install requirements:
+```sh
+pip install -r requirements.txt
 ```
 
-Inference
+## Notes
 
-```
-python inference.py --model-path weights/last.pt --image-path assets/image.jpg
-```
+- The code no longer uses the Carvana dataset or image formats.
+- All data loading, visualization, and training are adapted for `.npy` files from the COVID CT dataset.
+- For best results, ensure all images and masks are preprocessed and matched as described above.

@@ -6,18 +6,46 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Dataset
 from torchsummary import summary
 from tqdm import tqdm
 
 from models.unet import UNet
-from utils.dataset import Carvana
 from utils.general import strip_optimizers, random_seed, add_weight_decay
 from utils.loss import DiceCELoss, DiceLoss
 
 
 # Configure the logger
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
+class COVIDCTDataset(Dataset):
+    def __init__(self, images_dir, masks_dir, transform=None):
+        self.images_dir = images_dir
+        self.masks_dir = masks_dir
+        self.filenames = [os.path.splitext(f)[0] for f in os.listdir(images_dir) if f.lower().endswith('.npy')]
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.filenames)
+
+    def __getitem__(self, idx):
+        fname = self.filenames[idx]
+        image = np.load(os.path.join(self.images_dir, fname + '.npy')).astype(np.float32)
+        mask = np.load(os.path.join(self.masks_dir, fname + '.npy')).astype(np.float32)
+        # Windowing and normalization for CT (lung window)
+        wmin, wmax = -1000, 400
+        image = np.clip(image, wmin, wmax)
+        image = (image - wmin) / (wmax - wmin)
+        # Add channel dimension if needed
+        if image.ndim == 2:
+            image = image[None, ...]
+        if mask.ndim == 2:
+            mask = mask[None, ...]
+        # Optionally apply transforms
+        if self.transform:
+            image, mask = self.transform(image, mask)
+        return image, mask
 
 
 def parse_args():
@@ -33,6 +61,8 @@ def parse_args():
         help="Directory containing the dataset (default: './data')"
     )
     parser.add_argument("--scale", type=float, default=0.5, help="Scale factor for input image size (default: 0.5)")
+    parser.add_argument('--images_dir', type=str, required=True, help='Path to COVID CT images (.npy)')
+    parser.add_argument('--masks_dir', type=str, required=True, help='Path to COVID CT masks (.npy)')
 
     # Model parameters
     parser.add_argument("--num-classes", type=int, default=2, help="Number of output classes (default: 2)")
@@ -155,12 +185,11 @@ def main(params):
         torch.backends.cudnn.benchmark = True
 
     # Dataset
-    dataset = Carvana(root=params.data, scale=params.scale)
-
-    # Split train and validation (test)
-    n_val = int(len(dataset) * 0.1)
-    n_train = len(dataset) - n_val
-    train_data, test_data = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
+    train_data = COVIDCTDataset(
+        images_dir=params.images_dir,
+        masks_dir=params.masks_dir,
+        transform=None  # or your augmentation pipeline
+    )
 
     # DataLoader
     train_loader = DataLoader(
@@ -170,15 +199,8 @@ def main(params):
         shuffle=True,
         pin_memory=True
     )
-    test_loader = DataLoader(
-        test_data,
-        batch_size=params.batch_size,
-        num_workers=params.num_workers,
-        drop_last=True,
-        pin_memory=True
-    )
 
-    model = UNet(in_channels=3, num_classes=params.num_classes)
+    model = UNet(in_channels=1, num_classes=params.num_classes)
     model.to(device)
 
     # Optimizers & LR Scheduler & Mixed Precision & Loss
@@ -210,7 +232,7 @@ def main(params):
         f"\t{model.in_channels} input channels\n"
         f"\t{model.num_classes} output channels (number of classes)"
     )
-    summary(model, (3, int(1928*params.scale), int(1280*params.scale)))
+    summary(model, (1, int(1928*params.scale), int(1280*params.scale)))
 
     for epoch in range(start_epoch, params.epochs):
         train_one_epoch(
@@ -224,7 +246,7 @@ def main(params):
             print_freq=params.print_freq,
             scaler=scaler
         )
-        dice_score, dice_loss = evaluate(model, test_loader, device)
+        dice_score, dice_loss = evaluate(model, train_loader, device)
         lr_scheduler.step(dice_score)
         ckpt = {
             "model": model.state_dict(),
