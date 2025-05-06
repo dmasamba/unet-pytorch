@@ -29,7 +29,7 @@ This repository implements a UNet for semantic segmentation, adapted for the COV
 Example directory structure:
 ```
 data/
-  images/
+  imgs/
     case_001.npy
     case_002.npy
     ...
@@ -42,21 +42,21 @@ data/
 **Ensure dataset consistency:**  
 You can check and clean unmatched files using:
 ```sh
-python check_dataset_consistency.py --images_dir data/images --masks_dir data/masks --clean
+python check_dataset_consistency.py --images_dir data/imgs --masks_dir data/masks --clean
 ```
 
 ## Visualize Samples
 
 To visualize random samples and their masks (with optional overlay):
 ```sh
-python visualize_covid_ct.py --images_dir data/images --masks_dir data/masks --num_samples 4 --overlay
+python visualize_covid_ct.py --images_dir data/imgs --masks_dir data/masks --num_samples 4 --overlay
 ```
 
 ## Training
 
 To train the UNet on the COVID CT dataset:
 ```sh
-python train.py --images_dir data/images --masks_dir data/masks --batch-size 4 --epochs 10
+python train.py --images_dir data/imgs --masks_dir data/masks --batch-size 4 --epochs 10
 ```
 - The model expects single-channel CT images in `.npy` format.
 - All training parameters can be set via command-line arguments (see `python train.py --help`).
