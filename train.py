@@ -285,6 +285,9 @@ def main(params):
             f"\t{model.in_channels} input channels\n"
             f"\t{model.num_classes} output channels (number of classes)"
         )
+        # using more parameters for summary
+        # summary(model, (1, int(1928*params.scale), int(1280*params.scale)))
+        # using less parameters for summary to avoid memory issues
         summary(model, (1, 256, 256))
 
         for epoch in range(start_epoch, params.epochs):
