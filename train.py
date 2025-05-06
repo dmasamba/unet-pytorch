@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split, Dataset
 from torchsummary import summary
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 
 from models.unet import UNet
 from utils.general import strip_optimizers, random_seed, add_weight_decay
@@ -20,19 +21,34 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
 class COVIDCTDataset(Dataset):
-    def __init__(self, images_dir, masks_dir, transform=None):
+    def __init__(self, images_dir, masks_dir, file_list=None, transform=None):
         self.images_dir = images_dir
         self.masks_dir = masks_dir
-        self.filenames = [os.path.splitext(f)[0] for f in os.listdir(images_dir) if f.lower().endswith('.npy')]
+        if file_list is not None:
+            # Remove .npy extension if present, so we always add it later
+            self.filenames = [f[:-4] if f.endswith('.npy') else f for f in file_list]
+        else:
+            self.filenames = [os.path.splitext(f)[0] for f in os.listdir(images_dir) if f.lower().endswith('.npy')]
         self.transform = transform
+
+        # Filter: keep only files present in both images and masks directories
+        images_set = set(os.path.splitext(f)[0] for f in os.listdir(images_dir) if f.lower().endswith('.npy'))
+        masks_set = set(os.path.splitext(f)[0] for f in os.listdir(masks_dir) if f.lower().endswith('.npy'))
+        both = images_set & masks_set
+        orig_len = len(self.filenames)
+        self.filenames = [f for f in self.filenames if f in both]
+        if len(self.filenames) < orig_len:
+            print(f"Filtered {orig_len - len(self.filenames)} entries not present in both images and masks.")
 
     def __len__(self):
         return len(self.filenames)
 
     def __getitem__(self, idx):
         fname = self.filenames[idx]
-        image = np.load(os.path.join(self.images_dir, fname + '.npy')).astype(np.float32)
-        mask = np.load(os.path.join(self.masks_dir, fname + '.npy')).astype(np.float32)
+        image_file = fname + '.npy'
+        mask_file = fname + '.npy'
+        image = np.load(os.path.join(self.images_dir, image_file)).astype(np.float32)
+        mask = np.load(os.path.join(self.masks_dir, mask_file)).astype(np.float32)
         # Windowing and normalization for CT (lung window)
         wmin, wmax = -1000, 400
         image = np.clip(image, wmin, wmax)
@@ -111,8 +127,15 @@ def parse_args():
         help="Directory to save model weights (default: 'weights')"
     )
 
+    parser.add_argument('--num_folds', type=int, default=5, help='Number of cross-validation folds')
+
     args = parser.parse_args()
     return args
+
+
+def read_split_file(filepath):
+    with open(filepath, 'r') as f:
+        return [line.strip() for line in f if line.strip()]
 
 
 def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, device, epoch, print_freq, scaler=None):
@@ -180,8 +203,6 @@ def evaluate(model, data_loader, device, conf_threshold=0.5):
 
 def main(params):
     random_seed()
-
-    # Create folder to save weights
     os.makedirs(params.save_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -193,83 +214,112 @@ def main(params):
     else:
         torch.backends.cudnn.benchmark = True
 
-    # Dataset
-    train_data = COVIDCTDataset(
-        images_dir=params.images_dir,
-        masks_dir=params.masks_dir,
-        transform=None  # or your augmentation pipeline
-    )
+    # Cross-validation loop
+    for fold in range(params.num_folds):
+        logging.info(f"========== Fold {fold+1}/{params.num_folds} ==========")
+        # Read split files
+        train_split = read_split_file(os.path.join(params.data, f"train_new{fold}.txt"))
+        valid_split = read_split_file(os.path.join(params.data, f"valid_new{fold}.txt"))
 
-    # DataLoader
-    train_loader = DataLoader(
-        train_data,
-        batch_size=params.batch_size,
-        num_workers=params.num_workers,
-        shuffle=True,
-        pin_memory=True
-    )
+        # TensorBoard writer per fold with timestamp
+        timestamp = time.strftime("%m_%d_%y-%H_%M_%S")
+        writer = SummaryWriter(log_dir=os.path.join(params.save_dir, f"runs_fold{fold}_{timestamp}"))
 
-    model = UNet(in_channels=1, num_classes=params.num_classes)
-    model.to(device)
-
-    # Optimizers & LR Scheduler & Mixed Precision & Loss
-    parameters = add_weight_decay(model)
-    optimizer = torch.optim.RMSprop(
-        parameters,
-        lr=params.lr,
-        weight_decay=params.weight_decay,
-        momentum=params.momentum,
-        foreach=True
-    )
-    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=5)
-    scaler = torch.cuda.amp.GradScaler() if params.amp else None
-    criterion = DiceCELoss()
-
-    start_epoch = 0
-    if params.resume:
-        checkpoint = torch.load(f"{params.resume}", map_location="cpu", weights_only=True)
-        model.load_state_dict(checkpoint["model"])
-        optimizer.load_state_dict(checkpoint["optimizer"])
-        lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-        start_epoch = checkpoint["epoch"] + 1
-
-        if args.amp:
-            scaler.load_state_dict(checkpoint["scaler"])
-
-    logging.info(
-        f"Network: [UNet]:\n"
-        f"\t{model.in_channels} input channels\n"
-        f"\t{model.num_classes} output channels (number of classes)"
-    )
-    summary(model, (1, int(1928*params.scale), int(1280*params.scale)))
-
-    for epoch in range(start_epoch, params.epochs):
-        train_one_epoch(
-            model,
-            criterion,
-            optimizer,
-            train_loader,
-            lr_scheduler,
-            device,
-            epoch,
-            print_freq=params.print_freq,
-            scaler=scaler
+        # Datasets
+        train_data = COVIDCTDataset(
+            images_dir=params.images_dir,
+            masks_dir=params.masks_dir,
+            file_list=train_split,
+            transform=None
         )
-        dice_score, dice_loss = evaluate(model, train_loader, device)
-        lr_scheduler.step(dice_score)
-        ckpt = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "lr_scheduler": lr_scheduler.state_dict(),
-            "epoch": epoch,
-        }
-        logging.info(f"Dice Score: {dice_score:.7f} | Dice Loss: {dice_loss:.7f}")
-        if params.amp:
-            ckpt["scaler"] = scaler.state_dict()
-        torch.save(ckpt, f"{params.save_dir}/checkpoint.pth")
+        valid_data = COVIDCTDataset(
+            images_dir=params.images_dir,
+            masks_dir=params.masks_dir,
+            file_list=valid_split,
+            transform=None
+        )
 
-    # Strip optimizers & save weights
-    strip_optimizers(f"{params.save_dir}/checkpoint.pth", save_f=f"{params.save_dir}/last.pt")
+        # DataLoaders
+        train_loader = DataLoader(
+            train_data,
+            batch_size=params.batch_size,
+            num_workers=params.num_workers,
+            shuffle=True,
+            pin_memory=True
+        )
+        valid_loader = DataLoader(
+            valid_data,
+            batch_size=params.batch_size,
+            num_workers=params.num_workers,
+            shuffle=False,
+            pin_memory=True
+        )
+
+        model = UNet(in_channels=1, num_classes=params.num_classes)
+        model.to(device)
+
+        parameters = add_weight_decay(model)
+        optimizer = torch.optim.RMSprop(
+            parameters,
+            lr=params.lr,
+            weight_decay=params.weight_decay,
+            momentum=params.momentum,
+            foreach=True
+        )
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=5)
+        scaler = torch.cuda.amp.GradScaler() if params.amp else None
+        criterion = DiceCELoss()
+
+        start_epoch = 0
+        if params.resume:
+            checkpoint = torch.load(f"{params.resume}", map_location="cpu", weights_only=True)
+            model.load_state_dict(checkpoint["model"])
+            optimizer.load_state_dict(checkpoint["optimizer"])
+            lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            start_epoch = checkpoint["epoch"] + 1
+            if params.amp:
+                scaler.load_state_dict(checkpoint["scaler"])
+
+        logging.info(
+            f"Network: [UNet]:\n"
+            f"\t{model.in_channels} input channels\n"
+            f"\t{model.num_classes} output channels (number of classes)"
+        )
+        summary(model, (1, 256, 256))
+
+        for epoch in range(start_epoch, params.epochs):
+            train_one_epoch(
+                model,
+                criterion,
+                optimizer,
+                train_loader,
+                lr_scheduler,
+                device,
+                epoch,
+                print_freq=params.print_freq,
+                scaler=scaler
+            )
+            # Evaluate on validation set
+            dice_score, dice_loss = evaluate(model, valid_loader, device)
+            lr_scheduler.step(dice_score)
+            # TensorBoard logging
+            writer.add_scalar("Loss/valid", dice_loss, epoch)
+            writer.add_scalar("Dice/valid", dice_score, epoch)
+            writer.add_scalar("LR", optimizer.param_groups[0]["lr"], epoch)
+            ckpt = {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "lr_scheduler": lr_scheduler.state_dict(),
+                "epoch": epoch,
+            }
+            logging.info(f"Fold {fold} | Epoch {epoch} | Dice Score: {dice_score:.7f} | Dice Loss: {dice_loss:.7f}")
+            if params.amp:
+                ckpt["scaler"] = scaler.state_dict()
+            torch.save(ckpt, f"{params.save_dir}/checkpoint_fold{fold}.pth")
+
+        writer.close()
+        # Strip optimizers & save weights for this fold
+        strip_optimizers(f"{params.save_dir}/checkpoint_fold{fold}.pth", save_f=f"{params.save_dir}/last_fold{fold}.pt")
 
 
 if __name__ == "__main__":

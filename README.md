@@ -44,6 +44,11 @@ You can check and clean unmatched files using:
 ```sh
 python check_dataset_consistency.py --images_dir data/imgs --masks_dir data/masks --clean
 ```
+To also clean split files (e.g., for cross-validation), use:
+```sh
+python check_dataset_consistency.py --images_dir data/imgs --masks_dir data/masks --clean_splits
+```
+This will remove entries from split files that do not exist in both images and masks directories.
 
 ## Visualize Samples
 
@@ -60,6 +65,11 @@ python train.py --images_dir data/imgs --masks_dir data/masks --batch-size 4 --e
 ```
 - The model expects single-channel CT images in `.npy` format.
 - All training parameters can be set via command-line arguments (see `python train.py --help`).
+- **Cross-validation:** The code supports 5-fold cross-validation using split files (`train_new0.txt`, ..., `train_new4.txt` and `valid_new0.txt`, ..., `valid_new4.txt`).  
+  During training, any missing or unmatched files in the splits are automatically filtered out for safety.
+
+- **TensorBoard Logging:**  
+  Training and validation metrics for each fold are logged to TensorBoard in a directory named with the fold number and the current date/time (format: `runs_fold{fold}_mm_dd_yy-hh_mm_ss`).
 
 ## Model
 
@@ -86,3 +96,4 @@ pip install -r requirements.txt
 - The code no longer uses the Carvana dataset or image formats.
 - All data loading, visualization, and training are adapted for `.npy` files from the COVID CT dataset.
 - For best results, ensure all images and masks are preprocessed and matched as described above.
+- **Safety net:** During training, only samples present in both images and masks directories are used, even if split files contain extra or missing entries.
