@@ -85,11 +85,16 @@ def inference(model, device, params):
     # initialize inference augmentation
     preprocess = InferenceAugmentation(scale=params.scale)
     # read image
-    input_image = Image.open(params.image_path).convert("RGB")
+    input_image = Image.open(params.image_path).convert("L")  # Use grayscale for CT
     # preprocess
     input_tensor = preprocess(input_image)
     # add batch
     input_batch = input_tensor.unsqueeze(0)
+    # If model expects 1 channel, ensure input shape is (B, 1, H, W)
+    if input_batch.ndim == 3:
+        input_batch = input_batch.unsqueeze(1)
+    elif input_batch.shape[1] != 1:
+        input_batch = input_batch[:, 0:1, ...]
     # move to device
     input_batch = input_batch.to(device)
 
@@ -139,6 +144,7 @@ def parse_args():
     parser.add_argument("--image-path", type=str, default="assets/image.jpg", help="Path to the input image")
     parser.add_argument("--scale", type=float, default=0.5, help="Scale factor for resizing the image")
     parser.add_argument("--save-overlay", action="store_true", help="Save the overlay image if this flag is set")
+    parser.add_argument("--num-classes", type=int, default=2, help="Number of output classes (default: 2)")
 
     args = parser.parse_args()
 
@@ -147,7 +153,8 @@ def parse_args():
 
 def load_model(params, device):
     # Initialize the model
-    model = UNet(in_channels=3, num_classes=2)
+    # Use in_channels=1 for grayscale CT images, as in training
+    model = UNet(in_channels=1, num_classes=params.num_classes if hasattr(params, "num_classes") else 2)
 
     # Load weights and convert to float32 because weights stored in f16
     state_dict = torch.load(params.model_path, map_location=device)
